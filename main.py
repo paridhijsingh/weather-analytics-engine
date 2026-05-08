@@ -3,6 +3,17 @@ import httpx
 from models import WeatherRequest
 from database import SessionLocal, WeatherLog
 from sqlalchemy.orm import Session
+
+import os
+from openai import OpenAI
+from dotenv import load_dotenv
+
+load_dotenv()
+
+# Initialize the OpenAI client
+# API Key is stored in the .env file
+
+client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 app = FastAPI()
 
 def get_db():
@@ -12,20 +23,38 @@ def get_db():
     finally: 
         db.close()
 
-def get_ai_recommendation(temperature: float, description: str):
-    if "rain" in description.lower():
-        return f"It's {temperature}° and raining. Grab an umbrella and maybe a waterproof shell. "
-    elif temperature < 60:
-        return f"Chilly at {temperature}°. A heavy jacket is definitely recommended. "
-    elif temperature > 80 and "clear" in description.lower():
-        return "It's a hot, sunny day! Stay hydrated and wear sunscreen."
-    else:
-        return f"The weather is {description} at {temperature}°. Stay hydrated and wear sunscreen."
-        
+def get_ai_recommendation(city: str, temperature: float, description: str):
+    try:
+        response = client.chat.completions.create(
+            model="gpt-4o",
+            messages=[
+                {
+                    "role": "system",
+                    "content": (
+                        "You are a sophisticated AI Weather Consultant. "
+                        "Provide personalized, high-value advice based on current weather conditions. "
+                        "Consider health, productivity, travel, and mood. "
+                        "Tailor your tone to be helpful and insightful for a general audience."
+                    ),
+                },
+                {
+                    "role": "user",
+                    "content": (
+                        f"The weather in {city} is {temperature}°C and {description}. "
+                        "Provide a brief, helpful recommendation for my day."
+                    ),
+                },
+            ],
+            temperature=0.7,
+        )
+        return response.choices[0].message.content
+    except Exception as e:
+        return f"Currently unable to reach the AI brain, but stay safe! (Error: {e})"
+
 
 @app.post("/weather")
 async def get_weather(request: WeatherRequest, db: Session = Depends(get_db)):
-    async with httpx.AsyncClient() as client:
+    async with httpx.AsyncClient() as http_client:
         # API Key
         API_KEY = "56cf2ee354898fcc67db50143a5d3fec"
 
@@ -43,7 +72,7 @@ async def get_weather(request: WeatherRequest, db: Session = Depends(get_db)):
                 db.add(new_log)
                 db.commit()
 
-                recommendation = get_ai_recommendation(current_temp, weather_desc)
+                recommendation = get_ai_recommendation(request.city, current_temp, weather_desc)
 
                 return {
                     "message": request.city,
